@@ -1,4 +1,4 @@
-# qte-t2t: tick-to-trade FPGA pipeline
+# fpga-t2t: tick-to-trade FPGA pipeline
 
 Simulation-only low-latency pipeline: market data parser -> top-of-book
 tracker -> decision-tree signal -> order generator.
