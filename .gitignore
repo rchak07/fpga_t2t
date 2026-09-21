@@ -1,0 +1,10 @@
+*.vcd
+*.vvp
+*.o
+*.exe
+*.out
+*.log
+*.jou
+.Xil/
+build/
+data/train*
