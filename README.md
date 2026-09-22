@@ -36,6 +36,18 @@ All arithmetic is signed, with an arithmetic right shift.
 If the tree predicts class 1, buy at the current ask, qty 100.
 Class 0 means no order.
 
+## Debugging
+
+The `majority_class` function used `uint8_t` counters instead of `int`. On
+leaves with more than 255 samples, the counters silently overflowed and
+wrapped around, causing the wrong class to be assigned as the majority —
+even when one class clearly outnumbered the other. This was found by
+printing each leaf's true class counts alongside its assigned class
+during training: one leaf had 14474 class-1 samples and 7839 class-0
+samples, but was assigned class 0. Fixed by changing the counters to
+`int`, which fixed the overflow and raised test accuracy from ~43%
+(worse than random) to ~64%.
+
 ## Results
 
 (To be filled in: latency in cycles/ns, fmax, utilisation.)
