@@ -25,29 +25,26 @@
 // ---------- Data ----------
 
 struct Sample {
-    uint8_t features[4]; // e.g. [temp, humidity, wind, light]
-    uint8_t label;        // the known correct answer for this example
+    int features[4]; 
+    int label;     
 };
 
-std::vector<Sample> make_dataset() {
-    return {
-        // temp, humidity, wind, light -> label (1 = go outside)
-        {{80, 60, 10, 200}, 1},
-        {{85, 90, 5,  180}, 0},
-        {{70, 40, 20, 150}, 1},
-        {{60, 30, 45, 100}, 0},
-        {{55, 85, 25, 40},  0},
-        {{90, 70, 15, 220}, 1},
-        {{75, 95, 30, 60},  0},
-        {{65, 50, 8,  120}, 1},
-        {{50, 88, 35, 30},  0},
-        {{95, 45, 50, 240}, 0},
-        {{45, 92, 40, 20},  0},
-        {{88, 55, 18, 210}, 1},
-        {{72, 35, 55, 160}, 0},
-        {{68, 42, 12, 130}, 1},
-    };
+std::vector<Sample> load_csv(const std::string& path) {
+    std::vector<Sample> rows;
+    std::ifstream in(path);
+    std::string line;
+    while (std::getline(in, line)) {
+        Sample r;
+        sscanf(line.c_str(), "%d,%d,%d,%d,%d",
+               &r.features[0], &r.features[1], &r.features[2], &r.features[3], &r.label);
+        rows.push_back(r);
+    }
+    return rows;
 }
+
+auto train_rows = load_csv("data/train.csv");
+auto test_rows = load_csv("data/test.csv");
+
 
 // ---------- Entropy ----------
 
@@ -149,7 +146,7 @@ bool is_pure(const std::vector<Sample>& s) {
 }
 
 uint8_t majority_class(const std::vector<Sample>& s) {
-    uint8_t label0 = 0, label1 = 0;
+    int label0 = 0, label1 = 0;
     for (size_t i = 0; i < s.size(); i++) {
         if (s[i].label == 0) {
             label0++;
@@ -180,6 +177,11 @@ std::unique_ptr<TreeNode> build_tree(const std::vector<Sample>& s, int depth, in
     if (is_pure(s) || depth >= max_depth || s.size() <= 1) {
         node->is_leaf = true;
         node->leaf_class = majority_class(s);
+        int c1 = 0;
+        for (auto& r : s) c1 += r.label;
+        std::cerr << "LEAF depth=" << depth << " n=" << s.size()
+                   << " class1=" << c1 << " class0=" << (s.size() - c1)
+                   << " -> assigned " << (int)node->leaf_class << "\n";
         return node;
     }
 
@@ -236,9 +238,19 @@ int flatten(TreeNode* node, std::vector<FlatNode>& out) {
     }
 }
 
+void dump_tree_txt(const std::vector<FlatNode>& tree, const std::string& path) {
+    std::ofstream out(path);
+    out << tree.size() << "\n";
+    for (auto& f : tree) {
+        out << (int)f.feature_index << " " << (int)f.threshold << " "
+            << (int)f.left_child << " " << (int)f.right_child << " "
+            << (f.is_leaf ? 1 : 0) << " " << (int)f.leaf_class << "\n";
+    }
+}
+
 // ---------- Prediction on the flattened tree ----------
 
-uint8_t predict(const std::vector<FlatNode>& tree, const uint8_t features[4]) {
+uint8_t predict(const std::vector<FlatNode>& tree, const int features[4]) {
     int idx = 0;
     while (!tree[idx].is_leaf) {
         int feature = tree[idx].feature_index;
@@ -339,26 +351,47 @@ void print_flat_tree(const std::vector<FlatNode>& tree) {
 }
 
 int main() {
-    auto data = make_dataset();
-    auto root = build_tree(data, 0, /*max_depth=*/3);
+    auto data = train_rows;
+    auto root = build_tree(data, 0, /*max_depth=*/4);
+
+    long long hi_total = 0, hi_up = 0, lo_total = 0, lo_up = 0;
+    for (auto& s : train_rows) {
+        if (s.features[1] >= 128) { hi_total++; hi_up += s.label; }
+        else { lo_total++; lo_up += s.label; }
+    }
+    std::cout << "f1>=128: " << hi_up << "/" << hi_total << " = "
+            << (100.0 * hi_up / hi_total) << "% up\n";
+    std::cout << "f1<128:  " << lo_up << "/" << lo_total << " = "
+            << (100.0 * lo_up / lo_total) << "% up\n";
 
     std::vector<FlatNode> flat;
     flatten(root.get(), flat);
 
+    int pred1 = 0;
+    for(auto& s : train_rows) if(predict(flat, s.features) == 1) pred1++;
+    std::cout << "Tree predicts class 1 for " << pred1 << "/" << train_rows.size() << " rows\n";
+
     print_flat_tree(flat);
 
-    std::cout << "\nTraining-set predictions:\n";
-    int correct = 0;
-    for (auto& s : data) {
+    std::cout << "\nTrain-set accuracy\n";
+    int train_correct = 0;
+    for (auto& s : train_rows) {
         uint8_t pred = predict(flat, s.features);
-        bool ok = (pred == s.label);
-        correct += ok;
-        std::cout << "  f=[" << (int)s.features[0] << "," << (int)s.features[1] << ","
-                  << (int)s.features[2] << "," << (int)s.features[3] << "] "
-                  << "true=" << (int)s.label << " pred=" << (int)pred
-                  << (ok ? "  OK" : "  MISMATCH") << "\n";
+        train_correct += (pred == s.label);
     }
-    std::cout << "\n" << correct << "/" << data.size() << " correct.\n";
+    std::cout << "Train: " << train_correct << "/" << train_rows.size() << " ("
+            << (100.0 * train_correct / train_rows.size()) << "%)\n";
+
+    std::cout << "\nTest-set accuracy:\n";
+    int test_correct = 0;
+    for (auto& s : test_rows) {
+        uint8_t pred = predict(flat, s.features);
+        test_correct += (pred == s.label);
+    }
+    std::cout << test_correct << "/" << test_rows.size() << " correct ("
+            << (100.0 * test_correct / test_rows.size()) << "%)\n";
+
+    dump_tree_txt(flat, "data/tree.txt");
 
     export_sv_header(flat, "tree_data.svh");
     export_test_vectors(data, flat, "test_vectors.svh");
